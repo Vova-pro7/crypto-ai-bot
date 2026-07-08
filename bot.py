@@ -5,7 +5,7 @@ from flask import Flask
 from threading import Thread
 import requests
 import pandas as pd
-import pandas_ta as ta
+import ta
 
 # Ініціалізація бота
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -22,7 +22,6 @@ def run():
 
 Thread(target=run).start()
 
-# Список монет та таймфреймів
 MOCOINS = {
     'BTC': 'BTCUSDT',
     'ETH': 'ETHUSDT',
@@ -38,7 +37,6 @@ TIMEFRAMES = {
     '30м': '30m'
 }
 
-# Функція отримання історичних даних з Binance
 def get_candles(symbol, interval, limit=100):
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
@@ -52,29 +50,23 @@ def get_candles(symbol, interval, limit=100):
         df['low'] = df['low'].astype(float)
         return df
     except Exception as e:
-        print(f"Помилка отримання даних: {e}")
+        print(f"Помилка даних: {e}")
         return None
 
-# Функція аналізу ринку за RSI та Alligator
 def analyze_market(symbol, interval):
     df = get_candles(symbol, interval)
     if df is None or df.empty:
         return "Не вдалося отримати дані з ринку."
     
-    # Розрахунок RSI (період 14)
-    df['RSI'] = ta.rsi(df['close'], length=14)
+    # RSI за допомогою легшої бібліотеки 'ta'
+    df['RSI'] = ta.momentum.rsi(df['close'], window=14)
     
-    # Розрахунок Алігатора (Щелепа, Зуби, Губи) з базовими зміщеннями
-    # Використовуємо медіанну ціну ((high + low) / 2)
-    median_price = (df['high'] + df['low']) / 2
-    df['jaw'] = ta.smma(median_price, length=13).shift(8)
-    df['teeth'] = ta.smma(median_price, length=8).shift(5)
-    df['lips'] = ta.smma(median_price, length=5).shift(3)
+    # Алігатор (розрахунок через ковзні середні)
+    df['jaw'] = df['close'].ewm(span=13, adjust=False).mean().shift(8)
+    df['teeth'] = df['close'].ewm(span=8, adjust=False).mean().shift(5)
+    df['lips'] = df['close'].ewm(span=5, adjust=False).mean().shift(3)
     
-    # Останні значення індикаторів
     last_row = df.iloc[-1]
-    prev_row = df.iloc[-2]
-    
     rsi_val = last_row['RSI']
     close_price = last_row['close']
     
@@ -82,41 +74,35 @@ def analyze_market(symbol, interval):
     teeth = last_row['teeth']
     lips = last_row['lips']
     
-    # Логіка сигналів
-    score = 0  # Максимум 100% (по 50% на кожен індикатор)
+    score = 0
     direction = "ФЛЕТ ↕️"
     
-    # 1. Аналіз RSI
     rsi_signal = 0
     if rsi_val < 35:
-        rsi_signal = 1  # Перепроданість -> Вверх
+        rsi_signal = 1
     elif rsi_val > 65:
-        rsi_signal = -1 # Перекупленість -> Вниз
+        rsi_signal = -1
         
-    # 2. Аналіз Алігатора (Переплетення ліній або тренд)
     alligator_signal = 0
     if lips > teeth > jaw and close_price > lips:
-        alligator_signal = 1  # Алігатор відкрив пащу вверх
+        alligator_signal = 1
     elif lips < teeth < jaw and close_price < lips:
-        alligator_signal = -1 # Алігатор відкрив пащу вниз
+        alligator_signal = -1
 
-    # Фінальний розрахунок напрямку та сили сигналу
     total_signal = rsi_signal + alligator_signal
     
     if total_signal >= 1:
         direction = "ВВЕРХ 🟢 (BUY)"
-        # Вираховуємо силу сигналу
         score = 50 if total_signal == 1 else 90
-        if rsi_val < 30: score += 10 # Додаткова сила при жорсткій перепроданості
+        if rsi_val < 30: score += 10
     elif total_signal <= -1:
         direction = "ВНИЗ 🔴 (SELL)"
         score = 50 if total_signal == -1 else 90
         if rsi_val > 70: score += 10
     else:
-        direction = "НЕВИЗНАЧЕНО 🟡 (Очікування)"
-        score = 30
+        direction = "НЕВИЗНАЧЕНО 🟡"
+        score = 35
         
-    # Форматування виводу
     text = (
         f"📊 **Аналіз: {symbol}**\n"
         f"⏱ **Таймфрейм:** {interval}\n"
@@ -127,19 +113,17 @@ def analyze_market(symbol, interval):
         f"-------------------------\n"
         f"🔮 *Показники:*\n"
         f"• RSI: {rsi_val:.2f}\n"
-        f"• Алігатор: {'Паща відкрита' if alligator_signal != 0 else 'Спить (Флет)'}"
+        f"• Алігатор: {'Паща відкрита' if alligator_signal != 0 else 'Спить'}"
     )
     return text
 
-# Стартова команда
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     buttons = [types.KeyboardButton(f"Аналіз {coin}") for coin in MOCOINS.keys()]
     markup.add(*buttons)
-    bot.send_message(message.chat.id, "Привіт! Виберіть криптовалюту для аналізу в реальному часі:", reply_markup=markup)
+    bot.send_message(message.chat.id, "Привіт! Виберіть криптовалюту:", reply_markup=markup)
 
-# Обробка вибору монети
 @bot.message_handler(func=lambda msg: msg.text.startswith("Аналіз "))
 def choose_coin(message):
     coin = message.text.split(" ")[1]
@@ -149,19 +133,13 @@ def choose_coin(message):
         markup.add(*buttons)
         bot.send_message(message.chat.id, f"Оберіть таймфрейм для {coin}:", reply_markup=markup)
 
-# Обробка інлайн-кнопок з таймфреймами
 @bot.callback_query_handler(func=lambda call: call.data.startswith("tf_"))
 def process_analysis(call):
     _, coin, tf_raw = call.data.split("_")
     symbol = MOCOINS[coin]
-    
-    bot.answer_callback_query(call.id, text="Аналізую ринок...")
-    
-    # Запускаємо аналіз
+    bot.answer_callback_query(call.id, text="Аналізую...")
     result_text = analyze_market(symbol, tf_raw)
-    
     bot.send_message(call.message.chat.id, result_text, parse_mode="Markdown")
 
-# Запуск бота
 if __name__ == '__main__':
     bot.infinity_polling()
