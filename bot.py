@@ -5,7 +5,6 @@ from flask import Flask
 from threading import Thread
 import requests
 import pandas as pd
-import ta
 
 # Ініціалізація бота
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -41,27 +40,33 @@ def get_candles(symbol, interval, limit=100):
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
         response = requests.get(url).json()
-        df = pd.DataFrame(response, columns=[
-            'time', 'open', 'high', 'low', 'close', 'volume', 
-            'close_time', 'q_volume', 'trades', 'taker_base', 'taker_quote', 'ignore'
-        ])
+        df = pd.DataFrame(response)
+        if df.empty:
+            return None
+        # Беремо лише потрібні колонки: час, high, low, close
+        df = df[[0, 2, 3, 4]].copy()
+        df.columns = ['time', 'high', 'low', 'close']
         df['close'] = df['close'].astype(float)
         df['high'] = df['high'].astype(float)
         df['low'] = df['low'].astype(float)
         return df
     except Exception as e:
-        print(f"Помилка даних: {e}")
+        print(f"Помилка даних Binance: {e}")
         return None
 
 def analyze_market(symbol, interval):
     df = get_candles(symbol, interval)
-    if df is None or df.empty:
-        return "Не вдалося отримати дані з ринку."
+    if df is None or df.empty or len(df) < 20:
+        return "⚠️ Не вдалося обробити ринкові дані. Спробуйте ще раз."
     
-    # RSI за допомогою легшої бібліотеки 'ta'
-    df['RSI'] = ta.momentum.rsi(df['close'], window=14)
+    # 1. Ручний прорахунок RSI (без зовнішніх бібліотек)
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / (loss + 1e-10)
+    df['RSI'] = 100 - (100 / (1 + rs))
     
-    # Алігатор (розрахунок через ковзні середні)
+    # 2. Ручний прорахунок Алігатора (Ковзні середні EMA)
     df['jaw'] = df['close'].ewm(span=13, adjust=False).mean().shift(8)
     df['teeth'] = df['close'].ewm(span=8, adjust=False).mean().shift(5)
     df['lips'] = df['close'].ewm(span=5, adjust=False).mean().shift(3)
@@ -74,7 +79,11 @@ def analyze_market(symbol, interval):
     teeth = last_row['teeth']
     lips = last_row['lips']
     
-    score = 0
+    # Якщо RSI ще не порахувався на перших свічках
+    if pd.isna(rsi_val):
+        rsi_val = 50.0
+
+    score = 50
     direction = "ФЛЕТ ↕️"
     
     rsi_signal = 0
@@ -93,26 +102,26 @@ def analyze_market(symbol, interval):
     
     if total_signal >= 1:
         direction = "ВВЕРХ 🟢 (BUY)"
-        score = 50 if total_signal == 1 else 90
-        if rsi_val < 30: score += 10
+        score = 75 if total_signal == 1 else 95
+        if rsi_val < 30: score += 5
     elif total_signal <= -1:
         direction = "ВНИЗ 🔴 (SELL)"
-        score = 50 if total_signal == -1 else 90
-        if rsi_val > 70: score += 10
+        score = 75 if total_signal == -1 else 95
+        if rsi_val > 70: score += 5
     else:
         direction = "НЕВИЗНАЧЕНО 🟡"
-        score = 35
+        score = 40
         
     text = (
         f"📊 **Аналіз: {symbol}**\n"
         f"⏱ **Таймфрейм:** {interval}\n"
-        f"💰 **Поточна ціна:** {close_price:.4f}\n"
+        f"💰 **Поточна ціна:** {close_price:.2f} USDT\n"
         f"-------------------------\n"
         f"📈 **Напрямок:** {direction}\n"
         f"⚡ **Сила сигналу:** {min(score, 100)}%\n"
         f"-------------------------\n"
         f"🔮 *Показники:*\n"
-        f"• RSI: {rsi_val:.2f}\n"
+        f"• RSI (14): {rsi_val:.2f}\n"
         f"• Алігатор: {'Паща відкрита' if alligator_signal != 0 else 'Спить'}"
     )
     return text
@@ -122,7 +131,7 @@ def start_cmd(message):
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     buttons = [types.KeyboardButton(f"Аналіз {coin}") for coin in MOCOINS.keys()]
     markup.add(*buttons)
-    bot.send_message(message.chat.id, "Привіт! Виберіть криптовалюту:", reply_markup=markup)
+    bot.send_message(message.chat.id, "Привіт! Виберіть криптовалюту для аналізу:", reply_markup=markup)
 
 @bot.message_handler(func=lambda msg: msg.text.startswith("Аналіз "))
 def choose_coin(message):
@@ -137,7 +146,7 @@ def choose_coin(message):
 def process_analysis(call):
     _, coin, tf_raw = call.data.split("_")
     symbol = MOCOINS[coin]
-    bot.answer_callback_query(call.id, text="Аналізую...")
+    bot.answer_callback_query(call.id, text="Аналізую ринок...")
     result_text = analyze_market(symbol, tf_raw)
     bot.send_message(call.message.chat.id, result_text, parse_mode="Markdown")
 
