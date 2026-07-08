@@ -1,60 +1,67 @@
 import telebot
-import requests
 from telebot import types
+import requests
 from datetime import datetime
 
-TOKEN = "ТВІЙ_ТОКЕН_БОТА_СЮДИ" # ←←← Зміни на свій!
+TOKEN = "ТВІЙ_ТОКЕН_БОТА" # ← Зміни!
 
 bot = telebot.TeleBot(TOKEN)
 
-COINS = {"btc": "BTCUSDT", "eth": "ETHUSDT", "sol": "SOLUSDT", "bnb": "BNBUSDT", "xrp": "XRPUSDT"}
+COINS = {
+    "btc": "bitcoin",
+    "eth": "ethereum",
+    "sol": "solana",
+    "bnb": "binancecoin",
+    "xrp": "ripple"
+}
 
 @bot.message_handler(commands=['start'])
 def start(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     for coin in COINS:
-        markup.add(types.InlineKeyboardButton(coin.upper(), callback_data=f"coin_{coin}"))
-    
-    bot.send_message(message.chat.id, "🚀 **Crypto Analyzer**\nОбери монету:", 
-                    parse_mode='Markdown', reply_markup=markup)
+        markup.add(types.InlineKeyboardButton(coin.upper(), callback_data=coin))
+    bot.send_message(message.chat.id, "🚀 **Простий Crypto Bot**\nОбери монету:", 
+                     parse_mode='Markdown', reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
-def callback(call):
-    if call.data.startswith("coin_"):
-        coin = call.data.split("_")[1]
-        symbol = COINS[coin]
+def analyze(call):
+    coin_id = call.data
+    coin_name = coin_id.upper()
+    
+    bot.edit_message_text(f"⏳ Аналіз {coin_name}...", call.message.chat.id, call.message.message_id)
+    
+    try:
+        # Отримуємо ціну та зміну
+        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
+        data = requests.get(url, timeout=10).json()
         
-        bot.edit_message_text("⏳ Аналізуємо...", call.message.chat.id, call.message.message_id)
+        price = data['market_data']['current_price']['usd']
+        change_1h = data['market_data']['price_change_percentage_1h_in_currency']['usd']
+        change_24h = data['market_data']['price_change_percentage_24h']
         
-        try:
-            # Беремо дані з Binance
-            url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=100"
-            data = requests.get(url, timeout=10).json()
-            
-            closes = [float(c[4]) for c in data]
-            current_price = closes[-1]
-            change = (closes[-1] - closes[-10]) / closes[-10] * 100
-            
-            if change > 0.5:
-                signal = "🟢 Ймовірність росту \~75%"
-            elif change < -0.5:
-                signal = "🔴 Ймовірність падіння \~70%"
-            else:
-                signal = "⚪ Нейтрально"
-            
-            text = f"""
-📊 **{coin.upper()}/USDT**
-💰 Ціна: **${current_price:,.4f}**
+        if change_1h > 0.5:
+            signal = "🟢 Сигнал на ріст (\~70%)"
+        elif change_1h < -0.5:
+            signal = "🔴 Сигнал на падіння (\~65%)"
+        else:
+            signal = "⚪ Нейтрально"
+        
+        text = f"""
+📊 **{coin_name}**
+
+💰 Ціна: **${price:,.4f}**
+📈 1 година: `{change_1h:.2f}%`
+📈 24 години: `{change_24h:.2f}%`
 
 {signal}
 
-⏱ Оновлено: {datetime.now().strftime("%H:%M")}
-            """
-            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
-            
-        except:
-            bot.edit_message_text("❌ Помилка з'єднання. Спробуй пізніше.", 
-                                call.message.chat.id, call.message.message_id)
+⏱ {datetime.now().strftime("%H:%M")}
+        """
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.edit_message_text("❌ Тимчасова помилка. Спробуй пізніше.", 
+                            call.message.chat.id, call.message.message_id)
 
-print("Бот запущено...")
+print("✅ Бот запущено!")
 bot.infinity_polling()
