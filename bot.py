@@ -30,7 +30,7 @@ MOCOINS = {
     'XRP': 'XRPUSDT'
 }
 
-# Таймфрейми для Bybit (1, 5, 15, 30)
+# Таймфрейми для Bybit
 TIMEFRAMES = {
     '1м': '1',
     '5м': '5',
@@ -39,41 +39,45 @@ TIMEFRAMES = {
 }
 
 def get_candles(symbol, interval, limit=100):
-    # Використовуємо стабільне API Bybit, воно не блокує сервери хостингів
     url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval={interval}&limit={limit}"
     try:
         response = requests.get(url).json()
-        if 'result' in response and 'list' in response['result']:
+        if 'result' in response and 'list' in response['result'] and len(response['result']['list']) > 0:
             candles = response['result']['list']
-            # Bybit повертає дані від нових до старих, розгортаємо їх
+            # Bybit віддає від нових до старих — розгортаємо в правильний хронологічний порядок
             candles.reverse()
             
             df = pd.DataFrame(candles)
             # Колонки Bybit: 0=time, 1=open, 2=high, 3=low, 4=close
             df = df[[0, 2, 3, 4]].copy()
             df.columns = ['time', 'high', 'low', 'close']
-            df['close'] = df['close'].astype(float)
-            df['high'] = df['high'].astype(float)
-            df['low'] = df['low'].astype(float)
+            
+            # ПРИМУСОВО переводимо в числа, бо Bybit віддає текст!
+            df['close'] = pd.to_numeric(df['close'], errors='coerce')
+            df['high'] = pd.to_numeric(df['high'], errors='coerce')
+            df['low'] = pd.to_numeric(df['low'], errors='coerce')
+            
+            # Прибираємо пусті рядки, якщо такі будуть
+            df = df.dropna()
             return df
         return None
     except Exception as e:
-        print(f"Помилка даних: {e}")
+        print(f"Помилка Bybit API: {e}")
         return None
 
 def analyze_market(symbol, interval):
     df = get_candles(symbol, interval)
     if df is None or df.empty or len(df) < 20:
-        return "⚠️ Ринок зараз перевантажений. Спробуйте натиснути кнопку ще раз через 5 секунд."
+        return "⚠️ Не вдалося отримати свіжі дані з ринку. Спробуйте ще раз."
     
-    # Розрахунок RSI
+    # Розрахунок RSI вручну
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / (loss + 1e-10)
     df['RSI'] = 100 - (100 / (1 + rs))
     
-    # Розрахунок Алігатора
+    # Розрахунок Алігатора (EMA)
     df['jaw'] = df['close'].ewm(span=13, adjust=False).mean().shift(8)
     df['teeth'] = df['close'].ewm(span=8, adjust=False).mean().shift(5)
     df['lips'] = df['close'].ewm(span=5, adjust=False).mean().shift(3)
@@ -118,11 +122,10 @@ def analyze_market(symbol, interval):
         direction = "НЕВИЗНАЧЕНО 🟡"
         score = 40
         
-    # Форматування виводу ціни
     price_str = f"{close_price:.2f}" if close_price > 1 else f"{close_price:.4f}"
     
-    # Перетворюємо інтервал назад для красивого тексту
-    display_tf = f"{interval}м"
+    # Повертаємо назву таймфрейму для краси
+    display_tf = "1м" if interval == "1" else f"{interval}м"
         
     text = (
         f"📊 **Аналіз: {symbol}**\n"
