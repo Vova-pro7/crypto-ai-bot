@@ -21,7 +21,7 @@ def run():
 
 Thread(target=run).start()
 
-# Пари для Bybit
+# Пари
 MOCOINS = {
     'BTC': 'BTCUSDT',
     'ETH': 'ETHUSDT',
@@ -30,7 +30,7 @@ MOCOINS = {
     'XRP': 'XRPUSDT'
 }
 
-# Таймфрейми для Bybit
+# Таймфрейми
 TIMEFRAMES = {
     '1м': '1',
     '5м': '5',
@@ -39,45 +39,72 @@ TIMEFRAMES = {
 }
 
 def get_candles(symbol, interval, limit=100):
-    url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval={interval}&limit={limit}"
+    # Маскуємося під звичайний браузер, щоб Bybit нас не блокував
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    # Спроба 1: Через офіційне API Bybit V5 з обходом блокувань
+    url_bybit = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval={interval}&limit={limit}"
     try:
-        response = requests.get(url).json()
+        response = requests.get(url_bybit, headers=headers, timeout=10).json()
         if 'result' in response and 'list' in response['result'] and len(response['result']['list']) > 0:
             candles = response['result']['list']
-            # Bybit віддає від нових до старих — розгортаємо в правильний хронологічний порядок
-            candles.reverse()
+            candles.reverse()  # Робимо хронологічний порядок
             
             df = pd.DataFrame(candles)
-            # Колонки Bybit: 0=time, 1=open, 2=high, 3=low, 4=close
             df = df[[0, 2, 3, 4]].copy()
             df.columns = ['time', 'high', 'low', 'close']
             
-            # ПРИМУСОВО переводимо в числа, бо Bybit віддає текст!
             df['close'] = pd.to_numeric(df['close'], errors='coerce')
             df['high'] = pd.to_numeric(df['high'], errors='coerce')
             df['low'] = pd.to_numeric(df['low'], errors='coerce')
-            
-            # Прибираємо пусті рядки, якщо такі будуть
+            df = df.dropna()
+            if not df.empty and len(df) >= 20:
+                return df
+    except Exception as e:
+        print(f"Bybit помилка: {e}")
+
+    # Спроба 2: Запасний варіант, якщо Bybit не відповів
+    url_backup = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval if 'м' not in interval else interval.replace('м','m')}&limit={limit}"
+    try:
+        # Для бінансу переводимо таймфрейм
+        binance_tf = interval
+        if interval == '1': binance_tf = '1m'
+        elif interval == '5': binance_tf = '5m'
+        elif interval == '15': binance_tf = '15m'
+        elif interval == '30': binance_tf = '30m'
+        
+        url_binance = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={binance_tf}&limit={limit}"
+        res = requests.get(url_binance, headers=headers, timeout=10).json()
+        if isinstance(res, list) and len(res) > 0:
+            df = pd.DataFrame(res)
+            # Колонки Binance: 1=open, 2=high, 3=low, 4=close
+            df = df[[0, 2, 3, 4]].copy()
+            df.columns = ['time', 'high', 'low', 'close']
+            df['close'] = pd.to_numeric(df['close'], errors='coerce')
+            df['high'] = pd.to_numeric(df['high'], errors='coerce')
+            df['low'] = pd.to_numeric(df['low'], errors='coerce')
             df = df.dropna()
             return df
-        return None
     except Exception as e:
-        print(f"Помилка Bybit API: {e}")
-        return None
+        print(f"Запасне API помилка: {e}")
+        
+    return None
 
 def analyze_market(symbol, interval):
     df = get_candles(symbol, interval)
     if df is None or df.empty or len(df) < 20:
-        return "⚠️ Не вдалося отримати свіжі дані з ринку. Спробуйте ще раз."
+        return "⚠️ Сервери біржі тимчасово не відповідають. Будь ласка, натисніть кнопку ще раз!"
     
-    # Розрахунок RSI вручну
+    # Розрахунок RSI
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / (loss + 1e-10)
     df['RSI'] = 100 - (100 / (1 + rs))
     
-    # Розрахунок Алігатора (EMA)
+    # Розрахунок Алігатора
     df['jaw'] = df['close'].ewm(span=13, adjust=False).mean().shift(8)
     df['teeth'] = df['close'].ewm(span=8, adjust=False).mean().shift(5)
     df['lips'] = df['close'].ewm(span=5, adjust=False).mean().shift(3)
@@ -123,8 +150,6 @@ def analyze_market(symbol, interval):
         score = 40
         
     price_str = f"{close_price:.2f}" if close_price > 1 else f"{close_price:.4f}"
-    
-    # Повертаємо назву таймфрейму для краси
     display_tf = "1м" if interval == "1" else f"{interval}м"
         
     text = (
