@@ -1,4 +1,2 @@
 pyTelegramBotAPI
-pandas
-numpy
 requests
