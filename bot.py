@@ -25,7 +25,6 @@ TIMEFRAMES = {'1м': '1', '5м': '5', '15м': '15', '30м': '30'}
 
 def analyze_market(coin, interval):
     try:
-        # Беремо готові дані 24-годинної зміни ринку
         url = f"https://min-api.cryptocompare.com/data/pricemultifull?fsyms={coin}&tsyms=USDT"
         res = requests.get(url, timeout=10).json()
         
@@ -38,7 +37,6 @@ def analyze_market(coin, interval):
             high = data['HIGH24HOUR']
             low = data['LOW24HOUR']
             
-            # Логіка сигналу на основі добового тренду
             if change_pct > 1.5:
                 direction = "ВВЕРХ 🟢 (BUY)"
                 score = 85
@@ -69,7 +67,7 @@ def analyze_market(coin, interval):
     except Exception as e:
         print(f"Помилка: {e}")
         
-    return "⚠️ Сервер обробки тимчасово перевантажений. Натисніть кнопку ще раз!"
+    return "⚠️ Сервер тимчасово перевантажений. Натисніть кнопку ще раз!"
 
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
@@ -87,7 +85,7 @@ def choose_coin(message):
         markup.add(*buttons)
         bot.send_message(message.chat.id, f"Оберіть таймфрейм для {coin}:", reply_markup=markup)
 
-@bot.callback_query_handler(func=func=lambda call: call.data.startswith("tf_"))
+@bot.callback_query_handler(func=lambda call: call.data.startswith("tf_"))
 def process_analysis(call):
     _, coin, tf = call.data.split("_")
     bot.answer_callback_query(call.id, text="Сканую ринок...")
