@@ -4,7 +4,6 @@ from telebot import types
 from flask import Flask
 from threading import Thread
 import requests
-import pandas as pd
 
 # Ініціалізація бота
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -21,7 +20,7 @@ def run():
 
 Thread(target=run).start()
 
-# Пари для легкого інфо-сервера
+# Пари
 MOCOINS = {
     'BTC': 'BTC',
     'ETH': 'ETH',
@@ -38,45 +37,67 @@ TIMEFRAMES = {
     '30м': '30'
 }
 
+def calculate_ema(prices, period):
+    if len(prices) < period:
+        return prices[-1] if prices else 0
+    k = 2 / (period + 1)
+    ema = sum(prices[:period]) / period
+    for price in prices[period:]:
+        ema = (price * k) + (ema * (1 - k))
+    return ema
+
+def calculate_rsi(prices, period=14):
+    if len(prices) < period + 1:
+        return 50.0
+    gains = []
+    losses = []
+    for i in range(1, len(prices)):
+        diff = prices[i] - prices[i-1]
+        if diff > 0:
+            gains.append(diff)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(diff))
+            
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    
+    if avg_loss == 0:
+        return 100.0
+        
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * 13 + gains[i]) / 14
+        avg_loss = (avg_loss * 13 + losses[i]) / 14
+        
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
 def analyze_market(coin, interval):
     try:
-        # Прямий легкий запит хвилинних свічок, який працює всюди
-        url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={coin}&tsym=USDT&limit=100&aggregate={interval}"
+        url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={coin}&tsym=USDT&limit=150&aggregate={interval}"
         res = requests.get(url, timeout=10).json()
         
         if 'Data' in res and 'Data' in res['Data'] and len(res['Data']['Data']) > 0:
             candles = res['Data']['Data']
-            df = pd.DataFrame(candles)
             
-            # Нам потрібні high, low, close
-            df = df[['high', 'low', 'close']].copy()
-            df['close'] = pd.to_numeric(df['close'], errors='coerce')
-            df['high'] = pd.to_numeric(df['high'], errors='coerce')
-            df['low'] = pd.to_numeric(df['low'], errors='coerce')
+            closes = [float(c['close']) for c in candles]
+            highs = [float(c['high']) for c in candles]
+            lows = [float(c['low']) for c in candles]
             
-            # Розрахунок RSI
-            delta = df['close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / (loss + 1e-10)
-            df['RSI'] = 100 - (100 / (1 + rs))
+            if len(closes) < 30:
+                return "⚠️ Мало даних для аналізу ринку. Спробуйте пізніше."
+                
+            close_price = closes[-1]
+            rsi_val = calculate_rsi(closes, 14)
             
-            # Розрахунок Алігатора
-            df['jaw'] = df['close'].ewm(span=13, adjust=False).mean().shift(8)
-            df['teeth'] = df['close'].ewm(span=8, adjust=False).mean().shift(5)
-            df['lips'] = df['close'].ewm(span=5, adjust=False).mean().shift(3)
+            # Алігатор (вручну через зміщення та EMA)
+            jaw = calculate_ema(closes[:-8], 13) if len(closes) > 8 else closes[-1]
+            teeth = calculate_ema(closes[:-5], 8) if len(closes) > 5 else closes[-1]
+            lips = calculate_ema(closes[:-3], 5) if len(closes) > 3 else closes[-1]
             
-            last_row = df.iloc[-1]
-            rsi_val = last_row['RSI']
-            close_price = last_row['close']
-            
-            jaw = last_row['jaw']
-            teeth = last_row['teeth']
-            lips = last_row['lips']
-            
-            if pd.isna(rsi_val):
-                rsi_val = 50.0
-
             score = 50
             direction = "ФЛЕТ ↕️"
             
@@ -107,11 +128,10 @@ def analyze_market(coin, interval):
                 score = 40
                 
             price_str = f"{close_price:.2f}" if close_price > 1 else f"{close_price:.4f}"
-            display_tf = f"{interval}м"
                 
             text = (
                 f"📊 **Аналіз: {coin}USDT**\n"
-                f"⏱ **Таймфрейм:** {display_tf}\n"
+                f"⏱ **Таймфрейм:** {interval}м\n"
                 f"💰 **Поточна ціна:** {price_str} USDT\n"
                 f"-------------------------\n"
                 f"📈 **Напрямок:** {direction}\n"
@@ -123,9 +143,9 @@ def analyze_market(coin, interval):
             )
             return text
     except Exception as e:
-        print(f"Помилка сервера: {e}")
+        print(f"Помилка: {e}")
         
-    return "⚠️ Помилка обробки. Будь ласка, натисніть кнопку таймфрейму ще раз!"
+    return "⚠️ Помилка обробки ринку. Натисніть кнопку таймфрейму ще раз!"
 
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
