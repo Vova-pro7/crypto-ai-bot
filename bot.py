@@ -40,9 +40,9 @@ def analyze(call):
         change_24h = data['market_data']['price_change_percentage_24h']
         
         if change_1h > 0.5:
-            signal = "🟢 Сигнал на ріст (\~70%)"
+            signal = "🟢 Сигнал на ріст (\\\~70%)"
         elif change_1h < -0.5:
-            signal = "🔴 Сигнал на падіння (\~65%)"
+            signal = "🔴 Сигнал на падіння (\\\~65%)"
         else:
             signal = "⚪ Нейтрально"
         
