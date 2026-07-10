@@ -74,8 +74,8 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     help_text = "<b>📚 Команди:</b>\n\n/start - Меню\n/analyze BTC - Мультитаймфрейм\n/scan BTC - Швидкий скан\n/help - Справка\n\n<b>🎯 Confidence?</b>\n0-100% = скільки індикаторів\n\n<b>📊 Індикатори:</b>\n• RSI\n• MA\n• Williams Alligator\n• Price vs MA200"
     await update.message.reply_text(help_text, parse_mode="HTML")
-
-def main():
+    
+    def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analyze", analyze_command))
@@ -83,7 +83,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(handle_callbacks))
     logger.info("🤖 Бот запущено: Multi-Timeframe Analyzer")
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=[15, 2])
 
 if __name__ == "__main__":
     main()
