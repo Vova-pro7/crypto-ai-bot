@@ -10,19 +10,20 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "YOUR_TOKEN")
 
 async def get_price(symbol: str) -> dict:
-    """Отримує ціну BTC/ETH"""
+    """Отримує ціну з Binance"""
     try:
         async with aiohttp.ClientSession() as session:
-            url = f"https://api.bybit.com/v5/market/tickers?category=spot&symbol={symbol}USDT"
+            # Стукаємося на публічне API Binance
+            url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}USDT"
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    if data.get('result', {}).get('list'):
-                        ticker = data['result']['list'][0]
-                        return {
-                            'price': float(ticker['lastPrice']),
-                            'change24h': float(ticker['price24hPcnt']) * 100,
-                        }
+                    ticker = await resp.json()
+                    return {
+                        'price': float(ticker['lastPrice']),
+                        'change24h': float(ticker['priceChangePercent']),
+                    }
+                else:
+                    logger.error(f"Binance API returned status: {resp.status}")
     except Exception as e:
         logger.error(f"Error: {e}")
     return None
@@ -48,7 +49,7 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             message = f"📊 <b>{symbol}</b>\n\n💵 Ціна: <code>${price:,.2f}</code>\n📈 24h: <code>{change:+.2f}%</code>"
             await query.edit_message_text(text=message, parse_mode="HTML")
         else:
-            await query.edit_message_text(text="❌ Помилка: Біржа Bybit не віддає дані для цього сервера.")
+            await query.edit_message_text(text="❌ Помилка: Не вдалося отримати дані з Binance.")
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -59,3 +60,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
