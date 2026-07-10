@@ -29,7 +29,7 @@ async def get_price(symbol: str) -> dict:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [
-        [InlineKeyboardButton("🪙 Bitcoin", callback_data="price_BTC"), InlineKeyboardButton("⟠ Ethereum", callback_data="price_ETH")]
+        [InlineKeyboardButton("₿ Bitcoin", callback_data="price_BTC"), InlineKeyboardButton("♦ Ethereum", callback_data="price_ETH")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("🤖 <b>Crypto Bot</b>\n\nНатисни на крипто!", reply_markup=reply_markup, parse_mode="HTML")
@@ -37,22 +37,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    
+
     if query.data.startswith("price_"):
         symbol = query.data.replace("price_", "")
         data = await get_price(symbol)
-        
+
         if data:
             price = data['price']
             change = data['change24h']
-            message = f"💰 <b>{symbol}</b>\n━━━\nЦіна: <code>${price:,.2f}</code>\n24h: <code>{change:+.2f}%</code>"
+            message = f"📊 <b>{symbol}</b>\n\n💵 Ціна: <code>${price:,.2f}</code>\n📈 24h: <code>{change:+.2f}%</code>"
             await query.edit_message_text(text=message, parse_mode="HTML")
+        else:
+            await query.edit_message_text(text="❌ Помилка: Біржа Bybit не віддає дані для цього сервера.")
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(handle_callbacks))
-    logger.info("🤖 Бот запущено!")
+    logger.info("🚀 Бот запущено!")
     app.run_polling()
 
 if __name__ == "__main__":
