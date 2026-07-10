@@ -1,3 +1,4 @@
-python-telegram-bot==20.5
+python-telegram-bot
 aiohttp==3.9.1
 numpy
+
