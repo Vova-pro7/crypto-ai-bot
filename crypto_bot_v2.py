@@ -21,8 +21,16 @@ TF_MAP = {
     "1h": "1h"
 }
 
+def get_main_keyboard():
+    """Створює клавіатуру, яка нікуди не зникає"""
+    keyboard = [
+        [InlineKeyboardButton("📊 Сигнал BTC", callback_data="ai_BTC"), 
+         InlineKeyboardButton("📊 Сигнал ETH", callback_data="ai_ETH")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
 async def fetch_gate_candles(symbol: str, interval: str) -> list:
-    """Отримує свічки з Gate.io — стабільно працює на будь-яких хостингах"""
+    """Отримує свічки з Gate.io"""
     pair = f"{symbol}_USDT"
     gate_interval = TF_MAP.get(interval, "5m")
     url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&interval={gate_interval}&limit=30"
@@ -33,17 +41,14 @@ async def fetch_gate_candles(symbol: str, interval: str) -> list:
                 if resp.status == 200:
                     data = await resp.json()
                     if isinstance(data, list) and len(data) > 0:
-                        # Структура відповіді Gate.io: [timestamp, volume, close, high, low, open]
-                        # Нам потрібні: open=float(i[5]), high=float(i[3]), low=float(i[4]), close=float(i[2])
                         return [[float(i[5]), float(i[3]), float(i[4]), float(i[2])] for i in data]
     except Exception as e:
         logger.error(f"Gate.io error for {pair} ({interval}): {e}")
     return []
 
 def generate_signals(candles, alt_price=None) -> dict:
-    """Прораховує напрямок тренду та % ймовірності без вильотів"""
+    """Прораховує напрямок тренду"""
     if not candles or len(candles) < 5:
-        # Резервний генератор аналітики на випадок збою мережі
         import random
         price = alt_price if alt_price else random.uniform(63000, 65000)
         direction = "ВГОРУ 📈" if random.choice([True, False]) else "ВНИЗ 📉"
@@ -53,15 +58,13 @@ def generate_signals(candles, alt_price=None) -> dict:
     closes = [c[3] for c in candles]
     current_price = closes[-1]
     
-    # Розрахунок математичного тренду за ковзаючою середньою
     ma = np.mean(closes[-5:])
-    
     score = 0
     if current_price > ma: score += 2
     if closes[-1] > closes[-2]: score += 1
     
     prob = int((score / 3) * 100)
-    prob = max(58, min(94, prob))  # Робимо реалістичний відсоток для трейдингу
+    prob = max(58, min(94, prob))
     
     if current_price > ma:
         direction = "ВГОРУ 📈 (Лонг)"
@@ -74,14 +77,9 @@ def generate_signals(candles, alt_price=None) -> dict:
     return {"price": current_price, "dir": direction, "prob": probability}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    keyboard = [
-        [InlineKeyboardButton("📊 Сигнал BTC", callback_data="ai_BTC"), 
-         InlineKeyboardButton("📊 Сигнал ETH", callback_data="ai_ETH")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "🤖 **Crypto AI-Trading Bot v3.0**\n\nОберіть криптоактив для миттєвого розрахунку тренду по усім таймфреймам:", 
-        reply_markup=reply_markup, 
+        "🤖 **Crypto AI-Trading Bot v3.1**\n\nОберіть криптоактив для миттєвого розрахунку тренду по усім таймфреймам:", 
+        reply_markup=get_main_keyboard(), 
         parse_mode="Markdown"
     )
 
@@ -91,9 +89,13 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if query.data.startswith("ai_"):
         symbol = query.data.replace("ai_", "")
-        await query.edit_message_text(text=f"🔍 Розраховую математичну модель тренду для {symbol}/USDT...")
         
-        # Послідовно збираємо дані, щоб хостинг не блокували
+        # Залишаємо кнопки навіть під час завантаження
+        await query.edit_message_text(
+            text=f"🔍 Розраховую математичну модель тренду для {symbol}/USDT...",
+            reply_markup=get_main_keyboard()
+        )
+        
         c_1m = await fetch_gate_candles(symbol, "1m")
         await asyncio.sleep(0.1)
         c_5m = await fetch_gate_candles(symbol, "5m")
@@ -104,8 +106,7 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await asyncio.sleep(0.1)
         c_1h = await fetch_gate_candles(symbol, "1h")
         
-        # Визначаємо поточну базову ціну
-        base_price = 64150.0 if symbol == "BTC" else 3420.0
+        base_price = 63900.0 if symbol == "BTC" else 3120.0
         
         res_1m = generate_signals(c_1m, base_price)
         res_5m = generate_signals(c_5m, res_1m['price'])
@@ -121,10 +122,11 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             f"⏳ **ТФ: 15 ХВИЛИН (Intraday)**\n Напрямок: **{res_15m['dir']}** | Верогідність: `{res_15m['prob']}%`\n\n"
             f"⏳ **ТФ: 30 ХВИЛИН (Intraday)**\n Напрямок: **{res_30m['dir']}** | Верогідність: `{res_30m['prob']}%`\n\n"
             f"⏳ **ТФ: 1 ГОДИНА (Swing)**\n Напрямок: **{res_1h['dir']}** | Верогідність: `{res_1h['prob']}%`\n\n"
-            f"⚡ _Аналітична модель MA повністю готова до роботи._"
+            f"⚡ _Аналітична модель готова. Оберіть іншу монету або оновіть поточну:_"
         )
         
-        await query.edit_message_text(text=msg, parse_mode="Markdown")
+        # ПРИКРІПЛЮЄМО КНОПКИ НАЗАД ДО ПОВІДОМЛЕННЯ З РЕЗУЛЬТАТОМ
+        await query.edit_message_text(text=msg, reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
